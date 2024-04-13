@@ -24,7 +24,8 @@ for i in range (fullData.shape[0]):
     currentNodeFeatures.append(fullData.iloc[i, [3,5,6,7]].to_numpy(dtype=float))
     currentNodeLabels.append(fullData.iloc[i, 4])
 
-predictions = []
+predictions = [] 
+testLabels = []
 # Train autoregressive model on each node
 for i in range(len(nodeByNodeFeatures)):
     #grab the last day as the test day
@@ -34,7 +35,8 @@ for i in range(len(nodeByNodeFeatures)):
     nodeByNodeFeatures[i] = nodeByNodeFeatures[i][:-1]
 
     #grab the last label as the test label
-    testLabel = nodeByNodeLabels[i][-1]
+    testLabel = nodeByNodeLabels[i][-1] 
+    testLabels.append(testLabel)
     #remove the test label
     nodeByNodeLabels[i] = nodeByNodeLabels[i][:-1]
 
@@ -45,4 +47,17 @@ for i in range(len(nodeByNodeFeatures)):
     #predict the test day
     predictions.append(model.predict(start=len(nodeByNodeFeatures[i]), end=len(nodeByNodeFeatures[i]), exog_oos=testFeatures)[0]) #predicting one step into the future
 
-print(predictions)
+print(predictions) 
+
+def metrics():
+    # mae of 0.164
+    print(np.mean(np.abs(np.array(predictions)-np.array(testLabels))))
+
+    # mean squared error of 0.04
+    print(np.mean(np.square(np.array(predictions)-np.array(testLabels))))
+
+    # mean absolute percentage error
+    sum_term= 0;
+    for i in range (len(testLabels)):
+      sum_term+= np.abs((testLabels[i]- predictions[i])/testLabels[i])
+    print(sum_term/len(testLabels)*100)
