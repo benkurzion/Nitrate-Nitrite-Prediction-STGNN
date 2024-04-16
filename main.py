@@ -6,7 +6,7 @@ import torch
 from tqdm import tqdm
 from torch_geometric_temporal import STConv, StaticGraphTemporalSignal
 import torch.nn.functional as F
-from torch_geometric_temporal.nn.recurrent import GConvGRU, GConvLSTM, GCLSTM, TGCN, TGCN2, A3TGCN
+from torch_geometric_temporal.nn.recurrent import GConvGRU, GConvLSTM, GCLSTM, TGCN, TGCN2, A3TGCN, DCRNN
 from sklearn.preprocessing import StandardScaler
 
 
@@ -35,8 +35,13 @@ fullData['dateTime'] = pd.to_datetime(fullData['dateTime'], format='%Y-%m-%d')
 
 #Scale the "nitrite+nitrate" column 
 scaler = StandardScaler()
-#scaler.fit(fullData[["nitrite+nitrate"]])
-#fullData["nitrite+nitrate"] = scaler.transform(fullData[["nitrite+nitrate"]])
+scaler.fit(fullData[["nitrite+nitrate"]])
+fullData["nitrite+nitrate"] = scaler.transform(fullData[["nitrite+nitrate"]])
+
+#Scale the "water discharge" column
+scaler = StandardScaler()
+scaler.fit(fullData[["water discharge"]])
+fullData["water discharge"] = scaler.transform(fullData[["water discharge"]])
 
 
 #construct edge_index and edge_weight arrays
@@ -54,7 +59,8 @@ edge_index = np.array([sourceNodes, sinkNodes])
 edge_weight = np.array(edge_weight)
 
 
-'''features = np.zeros((360, adjMatrix.shape[0], 4)) #Time step, nodes, node features
+'''Following code constructs the feature matrix for all 360 days using all features (performs poorly)
+features = np.zeros((360, adjMatrix.shape[0], 4)) #Time step, nodes, node features
 nodeNumber = 0
 for i in range (fullData.shape[0]):
     if i > 0 and fullData.iat[i, 1] != fullData.iat[i - 1, 1]: # Begin data entry for next node 
@@ -74,7 +80,9 @@ for i in range (fullData.shape[0]):
     targets[dayIndex][nodeNumber] = fullData.iat[i, 4] # the nitrate+nitrite column = label'''
 
 
-features = np.zeros((353, adjMatrix.shape[0], 7)) # Time step, nodes, 7 previous "nitrite+nitrate" concentrations
+
+# Following code constructs feature matrix for the latter 353 days using the previous 7 labels as features.
+features = np.zeros((353, adjMatrix.shape[0], 8)) # Time step, nodes, 7 previous "nitrite+nitrate" concentrations and water discharge
 nodeNumber = 0
 for i in range (7, fullData.shape[0]):
     if i > 0 and fullData.iat[i, 1] != fullData.iat[i - 1, 1]: # Begin data entry for next node 
@@ -83,6 +91,7 @@ for i in range (7, fullData.shape[0]):
     # Fill in previous 7 "nitrite+nitrate" concentrations (scaled)
     for j in range (7):
         features[dayIndex][nodeNumber][j] = fullData.iat[i - j - 1, 4]
+    features[dayIndex][nodeNumber][7] = fullData.iat[i, 3] #water discharge feature
     
 targets = np.zeros((353, adjMatrix.shape[0]))
 nodeNumber = 0
@@ -100,10 +109,10 @@ train_dataset, test_dataset = temporal_signal_split(dataset, train_ratio=(357/36
 
 
 class RecurrentGCN(torch.nn.Module):
-    def __init__(self, node_features, filters):
+    def __init__(self, node_features):
         super(RecurrentGCN, self).__init__()
-        self.recurrent = GConvGRU(node_features, filters, 2)
-        self.linear = torch.nn.Linear(filters, 1)
+        self.recurrent = DCRNN(node_features, 32, 1)
+        self.linear = torch.nn.Linear(32, 1)
 
     def forward(self, x, edge_index, edge_weight):
         h = self.recurrent(x, edge_index, edge_weight)
@@ -111,7 +120,7 @@ class RecurrentGCN(torch.nn.Module):
         h = self.linear(h)
         return h
     
-model = RecurrentGCN(node_features=7, filters=32)
+model = RecurrentGCN(node_features=8)
 
 
 optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
@@ -128,12 +137,24 @@ for epoch in tqdm(range(50)):
         optimizer.step()
         optimizer.zero_grad()
 
-model.eval()
 
-cost = 0
+model.eval()
+mse = 0
+mape = 0
+mae = 0
+num_samples = test_dataset.snapshot_count
+
 for time, snapshot in enumerate(test_dataset):
     y_hat = model(snapshot.x, snapshot.edge_index, snapshot.edge_attr)
-    cost = cost + torch.mean((y_hat-snapshot.y)**2)
-cost = cost / (time+1)
-cost = cost.item()
-print("MSE: {:.4f}".format(cost))
+    print("In Eval step = ", time, " predictions =\n", y_hat)
+    mse += torch.mean((y_hat - snapshot.y) ** 2).item()
+    mape += torch.mean(torch.abs(y_hat - snapshot.y) / snapshot.y).item()
+    mae += torch.mean(torch.abs(y_hat - snapshot.y)).item()
+
+mse /= num_samples
+mape /= num_samples
+mae /= num_samples
+
+print("Mean Squared Error = ", mse)
+print("Mean Absolute Error = ", mae)
+print("Mean Absolute Percentage Error = ", (mape * 100))

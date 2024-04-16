@@ -4,11 +4,23 @@ import numpy as np
 import pandas as pd
 import torch
 import matplotlib.pyplot as plt
+from sklearn.preprocessing import StandardScaler
 
 PATH_TO_NODE_FEATURES = "node_features.txt"
 
 # Load the data
 fullData = pd.read_csv(filepath_or_buffer=PATH_TO_NODE_FEATURES, sep=",")
+
+
+#Scale the "nitrite+nitrate" column 
+scaler = StandardScaler()
+scaler.fit(fullData[["nitrite+nitrate"]])
+fullData["nitrite+nitrate"] = scaler.transform(fullData[["nitrite+nitrate"]])
+
+#Scale the "water discharge" column
+scaler = StandardScaler()
+scaler.fit(fullData[["water discharge"]])
+fullData["water discharge"] = scaler.transform(fullData[["water discharge"]])
 
 
 nodeByNodeFeatures = []
@@ -62,10 +74,10 @@ for i in range (len(testLabels)):
     for day in range (len (testLabels[0])):
         sum_term+= np.abs((testLabels[i][day]- predictions[i][day])/testLabels[i][day])
 print("\nMAPE = ")
-print(sum_term/len(testLabels)*100)
+print((sum_term/len(testLabels))*100)
 
 # create the scatter plot visual for the labels vs predictions for the third day
-'''y = []
+y = []
 for i in range (len(testLabels)):
     y.append(testLabels[i][2])
 yhat = []
@@ -79,4 +91,4 @@ plt.xlabel('Node')
 plt.ylabel('nitrate/nitrite concentration')
 plt.title('Autoregressive predictions for each node')
 plt.legend()
-plt.show()'''
+plt.show()
