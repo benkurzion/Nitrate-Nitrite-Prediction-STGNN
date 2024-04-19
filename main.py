@@ -1,4 +1,4 @@
-from torch_geometric_temporal.dataset import ChickenpoxDatasetLoader
+from torch_geometric_temporal.dataset import ChickenpoxDatasetLoader, PemsBayDatasetLoader
 from torch_geometric_temporal.signal import temporal_signal_split
 import numpy as np
 import pandas as pd
@@ -9,21 +9,21 @@ import torch.nn.functional as F
 from torch_geometric_temporal.nn.recurrent import GConvGRU, GConvLSTM, GCLSTM, TGCN, TGCN2, A3TGCN, DCRNN
 from sklearn.preprocessing import StandardScaler
 from torch_geometric.data import Batch
-
+import h5py
 
 PATH_TO_NODE_FEATURES = "node_features.txt"
 PATH_TO_ADJ_MAT = "prunedEdgesAdjMatrix"
 
-
-
 '''
-Change the training such that we train with sliding window d days back to predict
-remove longitude latitude. 
-use nitrate+nitrite. features are historical values and label is current value. 
-add in elevation as another variable to see if prediction accuracy improves
-could design function for edge weights which uses elevation and location as inputs
-discharge may not be necessary. 
-scale features
+40 training 40 validation 20 testing
+batch of training data has sliding window. 
+use all of the features - past 5 days and altidude and discharge. date doenst matter
+split the data using percentages of seasons. (uniform sampling?)
+only scale if we need to
+
+search up for stgnn layers
+stgcn? instead
+
 '''
 
 # Load the data
@@ -34,10 +34,11 @@ adjMatrix = pd.read_csv(filepath_or_buffer=PATH_TO_ADJ_MAT, sep=",", header=None
 # Change dateTime column from strings to datetime object
 fullData['dateTime'] = pd.to_datetime(fullData['dateTime'], format='%Y-%m-%d')
 
+''' #only scale if performance is ass
 #Scale the "nitrite+nitrate" column 
 scaler = StandardScaler()
 scaler.fit(fullData[["nitrite+nitrate"]])
-fullData["nitrite+nitrate"] = scaler.transform(fullData[["nitrite+nitrate"]])
+#fullData["nitrite+nitrate"] = scaler.transform(fullData[["nitrite+nitrate"]])
 
 #Scale the "water discharge" column
 scaler = StandardScaler()
@@ -47,7 +48,7 @@ fullData["water discharge"] = scaler.transform(fullData[["water discharge"]])
 #Scale the "altitude" column
 scaler = StandardScaler()
 scaler.fit(fullData[["altitude"]])
-fullData["altitude"] = scaler.transform(fullData[["altitude"]])
+fullData["altitude"] = scaler.transform(fullData[["altitude"]])'''
 
 
 
@@ -65,12 +66,14 @@ for i in range(0, adjMatrix.shape[0]):
 edge_index = np.array([sourceNodes, sinkNodes])
 edge_weight = np.array(edge_weight)
 
+loader = PemsBayDatasetLoader()
 
+dataset = loader.get_dataset()
 
 
 # Following code constructs feature matrix for the latter 360 - daysPrior days using the previous daysPrior labels as features.
 daysPrior = 5
-features = np.zeros((360 - daysPrior, adjMatrix.shape[0], daysPrior + 1)) # Time step, nodes, daysPrior previous "nitrite+nitrate" concentrations and water discharge and altitude
+features = np.zeros((360 - daysPrior, adjMatrix.shape[0], daysPrior + 2)) # Time step, nodes, daysPrior previous "nitrite+nitrate" concentrations and water discharge and altitude
 nodeNumber = -1
 i = 0
 while i < (fullData.shape[0]):
@@ -82,7 +85,7 @@ while i < (fullData.shape[0]):
     for j in range (daysPrior):
         features[dayIndex][nodeNumber][j] = fullData.iat[i - j - 1, 4]
     features[dayIndex][nodeNumber][daysPrior] = fullData.iat[i, 3] #water discharge feature (scaled)
-    #features[dayIndex][nodeNumber][daysPrior + 1] = fullData.iat[i, 7] #altitude feature (scaled)
+    features[dayIndex][nodeNumber][daysPrior + 1] = fullData.iat[i, 7] #altitude feature (scaled)
     i += 1
 
     
@@ -103,32 +106,18 @@ dataset = StaticGraphTemporalSignal(edge_index=edge_index, edge_weight=edge_weig
 train_dataset, test_dataset = temporal_signal_split(dataset, train_ratio=(357/360)) # The last 3 day as testing
 
 
-class NN_Model(torch.nn.Module):
-    def __init__(self, node_features, filters):
-        super(NN_Model, self).__init__()
-        self.recurrent = TGCN(node_features, filters)
-        self.linear = torch.nn.Linear(filters, 1)
-
-    def forward(self, x, edge_index, edge_weight):
-        h = self.recurrent(x, edge_index, edge_weight)
-        #print(type(h))
-        h = F.relu(h)
-        h = self.linear(h)
-        return h
-
-class RecurrentGCN(torch.nn.Module):
-    def __init__(self, node_features, filters):
-        super(RecurrentGCN, self).__init__()
-        self.recurrent = GConvGRU(node_features, filters, 2)
-        self.linear = torch.nn.Linear(filters, 1)
+class Dcrnn(torch.nn.Module):
+    def __init__(self, node_features):
+        super(Dcrnn, self).__init__()
+        self.recurrent = DCRNN(node_features, 64, 1)
+        self.linear = torch.nn.Linear(64, 1)
 
     def forward(self, x, edge_index, edge_weight):
         h = self.recurrent(x, edge_index, edge_weight)
         h = F.relu(h)
         h = self.linear(h)
         return h
-
-model = RecurrentGCN(node_features=6, filters=32)
+model = Dcrnn(node_features=7)
 
 
 optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
