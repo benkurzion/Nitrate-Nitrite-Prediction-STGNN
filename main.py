@@ -27,18 +27,17 @@ stgcn? instead
 
 '''
 
-train_set, val_set, test_set = getSeasonalData()
-
-targets = getTargets()
+train_set, train_lab, val_set, val_lab, test_set, test_lab = getSeasonalData()
 
 edge_index, edge_weight = getEdgeInformation()
 
 
-
 # Translate data to pytorch geometric temporal
 
-dataset = StaticGraphTemporalSignal(edge_index=edge_index, edge_weight=edge_weight, features=features, targets=targets)
-train_dataset, test_dataset = temporal_signal_split(dataset, train_ratio=(357/360)) # The last 3 day as testing
+train_dataset = StaticGraphTemporalSignal(edge_index=edge_index, edge_weight=edge_weight, features=train_set, targets=train_lab)
+validation_dataset = StaticGraphTemporalSignal(edge_index=edge_index, edge_weight=edge_weight, features=val_set, targets=val_lab)
+test_dataset = StaticGraphTemporalSignal(edge_index=edge_index, edge_weight=edge_weight, features=test_set, targets=test_lab)
+
 
 
 class RecurrentGCN(torch.nn.Module):
@@ -60,16 +59,41 @@ model = RecurrentGCN(node_features= 8)
 optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
 model.train()
 
-#CREATE SLIDING WINDOWS OF SIZE ~7 AND MAKE THEM ALL INTO STATICGRAPHTEMPORALSIGNALS
-#DO THE SAME FOR VALIDATION AND TEST DATA??
 
-for epoch in tqdm(range(50)):
-    for time, snapshot in enumerate(train_dataset): #change this to sliding window use LMM
-        y_hat = model(snapshot.x)
-        cost = torch.mean((y_hat-snapshot.y)**2)
-        cost.backward()
-        optimizer.step()
-        optimizer.zero_grad()
+'''for epoch in tqdm(range(200)):
+    cost = 0
+    for time, snapshot in enumerate(train_dataset):
+        y_hat = model(snapshot.x, snapshot.edge_index, snapshot.edge_attr)
+        cost = cost + torch.mean((y_hat-snapshot.y)**2)
+    cost = cost / (time+1)
+    cost.backward()
+    optimizer.step()
+    optimizer.zero_grad()'''
+
+window_size = 7
+for epoch in tqdm(range(200)):
+    for index, start in enumerate(train_dataset):
+        if index >= train_dataset.snapshot_count:
+            break
+        #print("index = ", index, " start = ", start)
+        cost = 0
+        performBackPropagation = True
+        window_length = 1
+        for _, snapshot in enumerate(train_dataset, start=index): # Loop over window
+            if window_length == window_size: # check if reached window_size 
+                performBackPropagation = True
+                break 
+            if snapshot.x[0][7] - start.x[0][7] > window_size: # check if window goes over 2 different seasons
+                performBackPropagation = False
+                break 
+            y_hat = model(snapshot.x, snapshot.edge_index, snapshot.edge_attr)
+            cost = cost + torch.mean((y_hat-snapshot.y)**2) # aggregate MSE for every element in the window
+            window_length += 1
+        if performBackPropagation:
+            cost = cost / (window_size)
+            cost.backward()
+            optimizer.step()
+            optimizer.zero_grad()
 
 
 model.eval()
@@ -79,7 +103,7 @@ mae = 0
 num_samples = test_dataset.snapshot_count
 
 for time, snapshot in enumerate(test_dataset):
-    y_hat = model(snapshot.x)
+    y_hat = model(snapshot.x, snapshot.edge_index, snapshot.edge_attr)
     mse += torch.mean((y_hat - snapshot.y) ** 2).item()
     mape += torch.mean(torch.abs((snapshot.y - y_hat) / snapshot.y)).item()
     mae += torch.mean(torch.abs(y_hat - snapshot.y)).item()

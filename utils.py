@@ -34,21 +34,19 @@ def getSeasonalData():
 
     range_arr = get_season_range(fullData)
 
-    # Following code constructs feature matrix for the latter 360 - daysPrior days using the previous daysPrior labels as features.
+    # Following code constructs feature matrix for the latter totalDays - daysPrior days using the previous daysPrior labels as features.
     # Update: Added day number to the feature set new shape is (days, nodes, 8)
 
-    features = np.zeros((360 - daysPrior, adjMatrix.shape[0],
+    features = np.zeros((fullData.shape[0] - daysPrior, adjMatrix.shape[0],
                          daysPrior + 3))  # Time step, nodes, daysPrior previous "nitrite+nitrate" concentrations and water discharge and altitude
     nodeNumber = -1
     i = 0
-    print(fullData.iat[5, 2])
     while i < (fullData.shape[0]):
         if i == 0 or fullData.iat[i, 1] != fullData.iat[i - 1, 1]:  # Begin data entry for next node
             nodeNumber += 1
             i = i + daysPrior
 
         dayIndex = (fullData.iat[i, 2] - fullData.iat[0, 2]).days - daysPrior
-        print(dayIndex)
         for j in range(daysPrior):
             features[dayIndex][nodeNumber][j] = fullData.iat[i - j - 1, 4]  # historical nitrite+nitrate
         features[dayIndex][nodeNumber][daysPrior] = fullData.iat[i, 3]  # water discharge
@@ -175,7 +173,7 @@ def split_season(season_arr, season_lab):
     val_size = int(num_days * val_percent)
 
     train_set = season_arr[:train_size]
-    train_lab = season_lab[: train_set]
+    train_lab = season_lab[: train_size]
     val_set = season_arr[train_size: train_size + val_size]
     val_lab = season_lab[train_size: train_size + val_size]
     test_set = season_arr[train_size + val_size:]
@@ -224,7 +222,10 @@ def getTargets():
     fullData = fullData[fullData['dateTime'] > '2021-04-06']
     adjMatrix = pd.read_csv(filepath_or_buffer=PATH_TO_ADJ_MAT, sep=",", header=None, index_col=None)
 
-    targets = np.zeros((360 - daysPrior, adjMatrix.shape[0]))  # Time step, nodes
+    # Change dateTime column from strings to datetime object
+    fullData['dateTime'] = pd.to_datetime(fullData['dateTime'], format='%Y-%m-%d')
+
+    targets = np.zeros((fullData.shape[0] - daysPrior, adjMatrix.shape[0]))  # Time step, nodes
     nodeNumber = -1
     i = 0
     while i < (fullData.shape[0]):
@@ -236,9 +237,3 @@ def getTargets():
         i += 1
 
     return targets
-
-
-
-
-
-
